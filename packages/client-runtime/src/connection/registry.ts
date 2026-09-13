@@ -174,7 +174,7 @@ export const make = Effect.gen(function* () {
           } satisfies ConnectionCatalogEntry,
         ] as const;
       }),
-      { concurrency: "unbounded" },
+      { concurrency: 4 },
     ),
   );
   const entries =
@@ -380,7 +380,7 @@ export const make = Effect.gen(function* () {
           Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
         ),
       {
-        concurrency: "unbounded",
+        concurrency: 4,
         discard: true,
       },
     );
@@ -693,7 +693,7 @@ export const make = Effect.gen(function* () {
             Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
           ),
         {
-          concurrency: "unbounded",
+          concurrency: 4,
           discard: true,
         },
       );
@@ -783,7 +783,7 @@ export const make = Effect.gen(function* () {
     SubscriptionRef.get(serviceScopes).pipe(
       Effect.flatMap((current) =>
         Effect.forEach(current.values(), (lease) => Scope.close(lease.scope, Exit.void), {
-          concurrency: "unbounded",
+          concurrency: 4,
           discard: true,
         }),
       ),
