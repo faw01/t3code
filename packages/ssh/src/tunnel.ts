@@ -223,3 +223,88 @@ function applyScriptPlaceholders(
   }
   return result;
 }
+
+// Re-exported from the shared HTTP readiness module so existing importers
+// (notably tunnel.test.ts) keep resolving it from here.
+export { describeReadinessCause };
+
+export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const net = require("node:net");
+const filePath = process.argv[2] ?? "";
+const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
+const scanWindow = Number.parseInt(process.argv[4] ?? "", 10);
+const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8").trim() : "";
+const preferred = Number.parseInt(raw, 10);
+const start = Number.isInteger(preferred) ? preferred : defaultPort;
+const end = start + scanWindow;
+
+function tryPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => resolve(error ? false : port));
+    });
+  });
+}
+
+(async () => {
+  for (let port = start; port < end; port += 1) {
+    const available = await tryPort(port);
+    if (available) {
+      process.stdout.write(String(port));
+      return;
+    }
+  }
+  process.exit(1);
+})().catch(() => process.exit(1));
+`;
+
+const REMOTE_WAIT_READY_SCRIPT = `const http = require("node:http");
+const port = Number.parseInt(process.argv[2] ?? "", 10);
+const timeoutMs = Number.parseInt(process.argv[3] ?? "", 10);
+const probeTimeoutMs = Number.parseInt(process.argv[4] ?? "", 10);
+if (!Number.isInteger(port) || !Number.isInteger(timeoutMs) || !Number.isInteger(probeTimeoutMs)) {
+  process.exit(1);
+}
+const deadline = Date.now() + timeoutMs;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function probe() {
+  return new Promise((resolve) => {
+    const request = http.get(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/",
+        timeout: probeTimeoutMs,
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () => {
+          resolve(response.statusCode >= 200 && response.statusCode < 300);
+        });
+      },
+    );
+    request.once("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.once("error", () => resolve(false));
+  });
+}
+
+(async () => {
+  while (Date.now() < deadline) {
+    if (await probe()) {
+      process.exit(0);
+    }
+    await sleep(100);
+  }
+  process.exit(1);
+})().catch(() => process.exit(1));
+`;
