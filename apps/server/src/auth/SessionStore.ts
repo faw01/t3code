@@ -685,7 +685,7 @@ export const make = Effect.gen(function* () {
           return next;
         });
         yield* Effect.forEach(replacedSessionIds, emitRemoved, {
-          concurrency: "unbounded",
+          concurrency: 8,
           discard: true,
         });
       }
@@ -954,7 +954,7 @@ export const make = Effect.gen(function* () {
         revokedSessionIds,
         (revokedSessionId) => emitRemoved(revokedSessionId),
         {
-          concurrency: "unbounded",
+          concurrency: 8,
           discard: true,
         },
       );
