@@ -174,7 +174,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           }
           yield* owned.stop;
         }),
-      { discard: true, concurrency: "unbounded" },
+      { discard: true, concurrency: 8 },
     ),
   );
 
