@@ -156,3 +156,189 @@ export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances"
     );
   },
 );
+
+const bootstrap = Effect.gen(function* () {
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const primaryBackend = yield* pool.primary;
+  const state = yield* DesktopState.DesktopState;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+  const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+  yield* logBootstrapInfo("bootstrap start");
+
+  if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
+    return yield* new DesktopDevelopmentBackendPortRequiredError();
+  }
+
+  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  const backendPort = backendPortSelection.port;
+  yield* logBootstrapInfo(
+    backendPortSelection.selectedByScan
+      ? "selected backend port via sequential scan"
+      : "using configured backend port",
+    {
+      port: backendPort,
+      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
+    },
+  );
+
+  const settings = yield* desktopSettings.get;
+  if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
+    yield* logBootstrapInfo("bootstrap restoring persisted server exposure mode", {
+      mode: settings.serverExposureMode,
+    });
+  }
+  const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
+  const backendConfig = yield* serverExposure.backendConfig;
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const rendererTarget = environment.isDevelopment
+    ? Option.getOrThrow(environment.devServerUrl)
+    : backendConfig.httpBaseUrl;
+  yield* electronProtocol.registerDesktopProtocol({
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    targetOrigin: rendererTarget,
+    backendOrigin: backendConfig.httpBaseUrl,
+    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+  });
+  yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
+    baseUrl: backendConfig.httpBaseUrl.href,
+  });
+  if (serverExposureState.endpointUrl) {
+    yield* logBootstrapInfo("bootstrap enabled network access", {
+      endpointUrl: serverExposureState.endpointUrl,
+    });
+  } else if (
+    settings.serverExposureMode === "network-accessible" &&
+    serverExposureState.mode === "local-only"
+  ) {
+    yield* logBootstrapWarning(
+      "bootstrap fell back to local-only because no advertised network host was available",
+    );
+  }
+  yield* snapShot.initialize;
+
+  yield* installDesktopIpcHandlers();
+  yield* logBootstrapInfo("bootstrap ipc handlers registered");
+
+  if (!(yield* Ref.get(state.quitting))) {
+    // In wsl-only mode the renderer is served by the WSL backend, which can be
+    // slow to cold-boot — show a "Connecting to WSL" splash immediately so the
+    // app feels responsive instead of presenting no window until WSL is ready.
+    // (Dual mode opens fast off the Windows primary, so no splash there.)
+    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
+      yield* desktopWindow.showConnectingSplash;
+    }
+    yield* primaryBackend.start;
+    yield* logBootstrapInfo("bootstrap backend start requested");
+    yield* appActivation.start.pipe(
+      Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+      Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
+    );
+    // Bring up the WSL backend if the user previously enabled it. The
+    // primary is already starting; reconcile fires off the WSL register
+    // in parallel rather than blocking primary readiness on a possibly
+    // slow first wsl.exe spawn.
+    yield* Effect.forkScoped(wslBackend.reconcile);
+  }
+}).pipe(Effect.withSpan("desktop.bootstrap"));
+
+const startup = Effect.gen(function* () {
+  const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
+  const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+  const electronApp = yield* ElectronApp.ElectronApp;
+  const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+  const linuxUrlHandler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
+  const clerk = yield* DesktopClerk.DesktopClerk;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+  const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  const updates = yield* DesktopUpdates.DesktopUpdates;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+
+  yield* shellEnvironment.installIntoProcess;
+  const hasCommandLinePasswordStore =
+    preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
+  const linuxElectronOptions =
+    environment.platform === "linux" && !hasCommandLinePasswordStore
+      ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess()
+      : preReadyElectronOptions.linux;
+  if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {
+    if (
+      linuxElectronOptions.passwordStore !== null ||
+      preReadyElectronOptions.linux?.passwordStore !== null
+    ) {
+      yield* electronApp.removeCommandLineSwitch("password-store");
+    }
+    if (linuxElectronOptions.passwordStore !== null) {
+      yield* electronApp.appendCommandLineSwitch(
+        "password-store",
+        linuxElectronOptions.passwordStore,
+      );
+    }
+  }
+  const userDataPath = yield* appIdentity.resolveUserDataPath;
+  yield* electronApp.setPath("userData", userDataPath);
+  yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
+  yield* desktopSettings.load;
+
+  if (linuxElectronOptions !== null) {
+    yield* logStartupInfo("linux password store configured", {
+      passwordStore: hasCommandLinePasswordStore
+        ? "command-line"
+        : (linuxElectronOptions.passwordStore ?? "electron-default"),
+      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
+      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+    });
+  }
+
+  yield* appIdentity.configure;
+  yield* lifecycle.register;
+  yield* clerk.configure;
+
+  yield* electronApp.whenReady.pipe(
+    Effect.withSpan("desktop.electron.whenReady"),
+    Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
+  );
+  yield* logStartupInfo("app ready");
+  if (environment.platform === "linux") {
+    const selectedBackend = yield* safeStorage.selectedStorageBackend;
+    yield* logStartupInfo("safe storage ready", {
+      backend: Option.getOrElse(selectedBackend, () => "unknown"),
+    });
+  }
+  yield* appIdentity.configure;
+  yield* applicationMenu.configure;
+  yield* updates.configure;
+  yield* DesktopRemoteUpdates.listen;
+  yield* linuxUrlHandler.register;
+  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+}).pipe(Effect.withSpan("desktop.startup"));
+
+const scopedProgram = Effect.scoped(
+  Effect.gen(function* () {
+    const runId = yield* makeDesktopRunId;
+    yield* Effect.annotateLogsScoped({ scope: "desktop", runId });
+    yield* Effect.annotateCurrentSpan({ scope: "desktop", runId });
+
+    const shutdown = yield* DesktopShutdown.DesktopShutdown;
+
+    yield* Effect.addFinalizer(() =>
+      // Stop every backend in the pool, not just the primary. The
+      // electronApp.quit() path can race ahead of the layer-scope
+      // cascade, so leaving the WSL instance for its parent scope
+      // finalizer means it gets hard-killed by the OS instead of
+      // receiving SIGTERM + grace.
+      stopAllPoolInstances().pipe(Effect.ensuring(shutdown.markComplete)),
+    );
+
+    yield* startup;
+    yield* shutdown.awaitRequest;
+  }),
+);
+
+export const program = scopedProgram.pipe(Effect.withSpan("desktop.app"));
