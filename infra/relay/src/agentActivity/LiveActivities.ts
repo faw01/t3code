@@ -236,7 +236,7 @@ export const make = Effect.gen(function* () {
                     ...json,
                   })),
                 ),
-              { concurrency: "unbounded" },
+              { concurrency: 4 },
             ),
           ),
           Effect.map((rows): ReadonlyArray<TargetRow> => rows),
