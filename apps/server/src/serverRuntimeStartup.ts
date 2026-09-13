@@ -466,7 +466,7 @@ const clearContinuationMarkers = (
           }),
         ),
       ),
-    { concurrency: "unbounded", discard: true },
+    { concurrency: 4, discard: true },
   );
 
 const clearProviderSessionContinuationMarkers = (threadIds: ReadonlyArray<ThreadId>) =>
