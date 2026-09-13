@@ -10,11 +10,11 @@ import {
   type OrchestrationThread,
   type ProviderApprovalDecision,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -143,7 +143,6 @@ function waitFor<A, B extends A, E>(
 function waitFor<A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
-  description: string,
   timeoutMs = 40_000,
 ): Effect.Effect<A, never> {
   const RETRY_SIGNAL = "wait_for_retry";
@@ -164,20 +163,6 @@ function waitFor<A, E>(
     Effect.orDie,
   );
 }
-
-class OrchestrationHarnessRuntimeError extends Schema.TaggedError<OrchestrationHarnessRuntimeError>()(
-  "OrchestrationHarnessRuntimeError",
-  {
-    operation: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-const tryRuntimePromise = <A>(operation: string, run: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) => new OrchestrationHarnessRuntimeError({ operation, cause }),
-  });
 
 export interface OrchestrationIntegrationHarness {
   readonly rootDir: string;
@@ -433,45 +418,21 @@ export const makeOrchestrationIntegrationHarness = (
       ),
     );
 
-    const runtime = ManagedRuntime.make(layer);
-    const engine = yield* tryRuntimePromise("load OrchestrationEngine service", () =>
-      runtime.runPromise(Effect.service(OrchestrationEngineService)),
-    ).pipe(Effect.orDie);
-    const reactor = yield* tryRuntimePromise("load OrchestrationReactor service", () =>
-      runtime.runPromise(Effect.service(OrchestrationReactor)),
-    ).pipe(Effect.orDie);
-    const providerRuntimeIngestion = yield* tryRuntimePromise(
-      "load ProviderRuntimeIngestion service",
-      () => runtime.runPromise(Effect.service(ProviderRuntimeIngestionService)),
-    ).pipe(Effect.orDie);
-    const checkpointReactor = yield* tryRuntimePromise("load CheckpointReactor service", () =>
-      runtime.runPromise(Effect.service(CheckpointReactor)),
-    ).pipe(Effect.orDie);
-    const snapshotQuery = yield* tryRuntimePromise("load ProjectionSnapshotQuery service", () =>
-      runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
-    ).pipe(Effect.orDie);
-    const providerService = yield* tryRuntimePromise("load ProviderService service", () =>
-      runtime.runPromise(Effect.service(ProviderService)),
-    ).pipe(Effect.orDie);
-    const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
-      runtime.runPromise(Effect.service(CheckpointStore.CheckpointStore)),
-    ).pipe(Effect.orDie);
-    const checkpointRepository = yield* tryRuntimePromise(
-      "load ProjectionCheckpointRepository service",
-      () => runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
-    ).pipe(Effect.orDie);
-    const pendingApprovalRepository = yield* tryRuntimePromise(
-      "load ProjectionPendingApprovalRepository service",
-      () => runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
-    ).pipe(Effect.orDie);
-    const runtimeReceiptBus = yield* tryRuntimePromise("load RuntimeReceiptBus service", () =>
-      runtime.runPromise(Effect.service(RuntimeReceiptBus)),
-    ).pipe(Effect.orDie);
+    const layerScope = yield* Scope.make();
+    const context = yield* Layer.buildWithScope(layer, layerScope);
+    const engine = Context.get(context, OrchestrationEngineService);
+    const reactor = Context.get(context, OrchestrationReactor);
+    const providerRuntimeIngestion = Context.get(context, ProviderRuntimeIngestionService);
+    const checkpointReactor = Context.get(context, CheckpointReactor);
+    const snapshotQuery = Context.get(context, ProjectionSnapshotQuery);
+    const providerService = Context.get(context, ProviderService);
+    const checkpointStore = Context.get(context, CheckpointStore.CheckpointStore);
+    const checkpointRepository = Context.get(context, ProjectionCheckpointRepository);
+    const pendingApprovalRepository = Context.get(context, ProjectionPendingApprovalRepository);
+    const runtimeReceiptBus = Context.get(context, RuntimeReceiptBus);
 
     const scope = yield* Scope.make("sequential");
-    yield* tryRuntimePromise("start OrchestrationReactor", () =>
-      runtime.runPromise(reactor.start().pipe(Scope.provide(scope))),
-    ).pipe(Effect.orDie);
+    yield* reactor.start().pipe(Scope.provide(scope));
     const receiptHistory = yield* Ref.make<ReadonlyArray<OrchestrationRuntimeReceipt>>([]);
     yield* Stream.runForEach(runtimeReceiptBus.streamEventsForTest, (receipt) =>
       Ref.update(receiptHistory, (history) => [...history, receipt]).pipe(Effect.asVoid),
@@ -580,12 +541,12 @@ export const makeOrchestrationIntegrationHarness = (
 
       const shutdown = Effect.gen(function* () {
         const closeScopeExit = yield* Effect.exit(Scope.close(scope, Exit.void));
-        const disposeRuntimeExit = yield* Effect.exit(Effect.promise(() => runtime.dispose()));
+        const closeLayerExit = yield* Effect.exit(Scope.close(layerScope, Exit.void));
 
         const failureCause = Exit.isFailure(closeScopeExit)
           ? closeScopeExit.cause
-          : Exit.isFailure(disposeRuntimeExit)
-            ? disposeRuntimeExit.cause
+          : Exit.isFailure(closeLayerExit)
+            ? closeLayerExit.cause
             : null;
 
         if (failureCause) {
