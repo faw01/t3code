@@ -282,7 +282,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
         environments,
         (environment) => refreshStatus(generation, clerkToken, environment),
         {
-          concurrency: "unbounded",
+          concurrency: 4,
           discard: true,
         },
       );
