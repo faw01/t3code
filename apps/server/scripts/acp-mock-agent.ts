@@ -1173,7 +1173,9 @@ const program = Effect.gen(function* () {
           },
         });
         if (typeof result !== "object" || result === null || !("outcome" in result)) {
-          throw new Error("Expected _x.ai/ask_user_question response outcome.");
+          return yield* AcpError.AcpRequestError.internalError(
+            "Expected _x.ai/ask_user_question response outcome.",
+          );
         }
         if (result.outcome === "cancelled") {
           return { stopReason: "end_turn" };
@@ -1184,7 +1186,9 @@ const program = Effect.gen(function* () {
           typeof result.answers !== "object" ||
           result.answers === null
         ) {
-          throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
+          return yield* AcpError.AcpRequestError.internalError(
+            "Expected accepted _x.ai/ask_user_question response answers.",
+          );
         }
 
         if (emitXAiAskUserQuestionThenHang) {
@@ -1254,14 +1258,16 @@ const program = Effect.gen(function* () {
           },
         });
         if (typeof result !== "object" || result === null || !("outcome" in result)) {
-          throw new Error("Expected _x.ai/exit_plan_mode response outcome.");
+          return yield* AcpError.AcpRequestError.internalError(
+            "Expected _x.ai/exit_plan_mode response outcome.",
+          );
         }
         if (
           result.outcome !== "abandoned" &&
           result.outcome !== "approved" &&
           result.outcome !== "request_changes"
         ) {
-          throw new Error(
+          return yield* AcpError.AcpRequestError.internalError(
             `Expected exit_plan_mode outcome abandoned|approved|request_changes, got ${String(result.outcome)}`,
           );
         }
