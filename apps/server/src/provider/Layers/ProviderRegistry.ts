@@ -55,6 +55,8 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
+const PROVIDER_SNAPSHOT_CONCURRENCY = 8;
+
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
 ): Effect.Effect<ReadonlyArray<ServerProvider>> =>
@@ -65,7 +67,7 @@ const loadProviders = (
         Effect.flatMap((snapshot) => correlateSnapshotWithSource(providerSource, snapshot)),
       ),
     {
-      concurrency: "unbounded",
+      concurrency: PROVIDER_SNAPSHOT_CONCURRENCY,
     },
   );
 
@@ -348,7 +350,7 @@ export const ProviderRegistryLive = Layer.effect(
             }),
           );
         }),
-      { concurrency: "unbounded" },
+      { concurrency: PROVIDER_SNAPSHOT_CONCURRENCY },
     ).pipe(
       Effect.map((providers) =>
         orderProviderSnapshots(
@@ -428,7 +430,7 @@ export const ProviderRegistryLive = Layer.effect(
         nextProviders,
         applyProviderUpdateState,
         {
-          concurrency: "unbounded",
+          concurrency: PROVIDER_SNAPSHOT_CONCURRENCY,
         },
       );
       const [previousProviders, providers, providersToPersist] = yield* Ref.modify(
@@ -461,7 +463,7 @@ export const ProviderRegistryLive = Layer.effect(
       if (haveProvidersChanged(previousProviders, providers)) {
         if (options?.persist !== false) {
           yield* Effect.forEach(providersToPersist, persistProvider, {
-            concurrency: "unbounded",
+            concurrency: PROVIDER_SNAPSHOT_CONCURRENCY,
             discard: true,
           });
         }
@@ -536,7 +538,7 @@ export const ProviderRegistryLive = Layer.effect(
     const refreshAll = Effect.fn("refreshAll")(function* () {
       const sources = yield* getLiveSources;
       return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
-        concurrency: "unbounded",
+        concurrency: PROVIDER_SNAPSHOT_CONCURRENCY,
         discard: true,
       }).pipe(Effect.andThen(Ref.get(providersRef)));
     });
@@ -688,7 +690,7 @@ export const ProviderRegistryLive = Layer.effect(
                 Effect.flatMap(syncProvider),
               );
             }).pipe(Effect.ignoreCause({ log: true })),
-          { concurrency: "unbounded", discard: true },
+          { concurrency: PROVIDER_SNAPSHOT_CONCURRENCY, discard: true },
         );
         yield* upsertProviders(unavailableProviders, {
           persist: false,
