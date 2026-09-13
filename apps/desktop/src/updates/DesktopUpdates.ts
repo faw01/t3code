@@ -520,7 +520,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const instances = yield* pool.list;
       const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
-        concurrency: "unbounded",
+        concurrency: 4,
         discard: true,
       }).pipe(Effect.exit);
       yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
@@ -597,7 +597,7 @@ export const make = Effect.gen(function* () {
           yield* Effect.forEach(
             instances,
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
-            { concurrency: "unbounded" },
+            { concurrency: 4 },
           );
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
