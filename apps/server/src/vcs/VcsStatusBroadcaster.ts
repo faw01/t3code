@@ -32,6 +32,7 @@ import * as ServerSettings from "../serverSettings.ts";
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
+const VCS_POLICY_CONCURRENCY = 8;
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
 const MAX_FAILURE_DIAGNOSTIC_VALUE_LENGTH = 128;
 
@@ -418,7 +419,7 @@ export const make = Effect.gen(function* () {
   ) {
     return yield* Effect.gen(function* () {
       const autoPullEnabled = (yield* Effect.forEach(policyCwds, autoPullPolicy.isEnabled, {
-        concurrency: "unbounded",
+        concurrency: VCS_POLICY_CONCURRENCY,
       })).some(Boolean);
       if (
         remote === null ||
@@ -505,7 +506,7 @@ export const make = Effect.gen(function* () {
             demandCwds,
             (demandCwd) =>
               backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
-            { concurrency: "unbounded" },
+            { concurrency: VCS_POLICY_CONCURRENCY },
           )).some(Boolean);
           if (!shouldRefresh) return null;
           // Resolve the checked-out branch again. A cached PR can belong to
@@ -548,7 +549,7 @@ export const make = Effect.gen(function* () {
                 cwd: demandCwd,
               }),
             ),
-            { concurrency: "unbounded" },
+            { concurrency: VCS_POLICY_CONCURRENCY },
           )).some(Boolean);
         if (!shouldRun) {
           return activeInterval;
