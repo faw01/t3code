@@ -537,7 +537,7 @@ const abortPendingPromptCompletions = (
               agentResult: null,
             }),
           ),
-        { concurrency: "unbounded" },
+        { concurrency: 8 },
       ).pipe(Effect.asVoid),
       remaining,
     ] as const;
