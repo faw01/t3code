@@ -20,7 +20,12 @@ jobs:
           set -euo pipefail
           git config user.name faw
           git config user.email fawwad30@gmail.com
-          base64 -d .github/patches/claude-rollback.b64 > /tmp/claude-rollback.patch
+          cat .github/patches/claude-rollback.b64.0 \
+              .github/patches/claude-rollback.b64.1 \
+              .github/patches/claude-rollback.b64.2 \
+              .github/patches/claude-rollback.b64.3 \
+            | tr -d '\n' | base64 -d > /tmp/claude-rollback.patch
+          md5sum /tmp/claude-rollback.patch
           cp .github/patches/rewind-commit-message.txt /tmp/rewind-commit-message.txt
           git fetch --no-tags https://github.com/pingdotgg/t3code.git main
           git checkout --detach FETCH_HEAD
