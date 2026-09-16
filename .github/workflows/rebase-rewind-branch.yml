@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: write
-  workflows: write
+# retrigger after user-token sync of mobile-eas-production.yml
 
 jobs:
   rebase:
