@@ -12,22 +12,18 @@ jobs:
   rebase:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          path: seed
-          fetch-depth: 1
-          persist-credentials: false
       - name: Replay one-commit fix onto current pingdotgg main
         run: |
           set -euxo pipefail
           git config --global --unset-all http.https://github.com/.extraheader || true
-          cat seed/.github/patches/claude-rollback.b64.0 \
-              seed/.github/patches/claude-rollback.b64.1 \
-              seed/.github/patches/claude-rollback.b64.2 \
-              seed/.github/patches/claude-rollback.b64.3 \
-            | tr -d '\n' | base64 -d > /tmp/claude-rollback.patch
+          mkdir -p /tmp/seed
+          for i in 0 1 2 3; do
+            curl -fsSL "https://raw.githubusercontent.com/faw01/t3code/seed/rebase-11721/.github/patches/claude-rollback.b64.$i" -o "/tmp/seed/p$i"
+          done
+          curl -fsSL "https://raw.githubusercontent.com/faw01/t3code/seed/rebase-11721/.github/patches/rewind-commit-message.txt" -o /tmp/seed/msg.txt
+          cat /tmp/seed/p0 /tmp/seed/p1 /tmp/seed/p2 /tmp/seed/p3 | tr -d '\n' | base64 -d > /tmp/claude-rollback.patch
           test "$(md5sum /tmp/claude-rollback.patch | awk '{print $1}')" = 6cffe5bedad2d97e6f59cffeb70557b1
-          git clone --depth 1 https://github.com/pingdotgg/t3code.git work
+          git -c submodule.recurse=false clone --depth 1 --no-recurse-submodules https://github.com/pingdotgg/t3code.git work
           cd work
           git config user.name faw
           git config user.email fawwad30@gmail.com
@@ -35,7 +31,7 @@ jobs:
           git add \
             apps/server/src/provider/Layers/ClaudeAdapter.ts \
             apps/server/src/provider/Layers/ClaudeAdapter.test.ts
-          git commit --author="faw <fawwad30@gmail.com>" -F ../seed/.github/patches/rewind-commit-message.txt
+          git commit --author="faw <fawwad30@gmail.com>" -F /tmp/seed/msg.txt
           git rev-parse HEAD
           git log -1 --format='%H %P %s'
           git diff --stat HEAD~1
