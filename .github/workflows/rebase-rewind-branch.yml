@@ -1,0 +1,33 @@
+name: rebase-rewind-onto-main
+
+on:
+  push:
+    branches:
+      - seed/rebase-11721
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Replay one-commit fix onto current pingdotgg main
+        run: |
+          set -euo pipefail
+          git config user.name faw
+          git config user.email fawwad30@gmail.com
+          base64 -d .github/patches/claude-rollback.b64 > /tmp/claude-rollback.patch
+          cp .github/patches/rewind-commit-message.txt /tmp/rewind-commit-message.txt
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git main
+          git checkout --detach FETCH_HEAD
+          git apply /tmp/claude-rollback.patch
+          git add \
+            apps/server/src/provider/Layers/ClaudeAdapter.ts \
+            apps/server/src/provider/Layers/ClaudeAdapter.test.ts
+          git commit --author="faw <fawwad30@gmail.com>" -F /tmp/rewind-commit-message.txt
+          git push --force origin HEAD:refs/heads/fix/claude-rewind-history-worker
+          git push origin --delete seed/rebase-11721 || true

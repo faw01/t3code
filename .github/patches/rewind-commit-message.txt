@@ -1,0 +1,5 @@
+fix(server): Claude rewind no longer orphans its history worker on shutdown
+
+Rewinding a Claude thread with a custom home reads and forks history in a child process. That process was started outside the rewind's fiber, so shutting the server down mid-rewind left it running on its own. It is now part of the rewind and stops with it. The custom home still reaches the worker as env. Server env is untouched.
+
+Created with Cursor Grok 4.6, implementation reviewed with Fable 5.1.
