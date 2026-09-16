@@ -3,8 +3,8 @@ main=6ee03240bccd9287a8c2246e9547697aa5857998
 patch md5=6cffe5bedad2d97e6f59cffeb70557b1
 $ git config --global --unset-all http.https://github.com/.extraheader
 exit 5
-$ git init /tmp/tmp99of9cva
-Initialized empty Git repository in /tmp/tmp99of9cva/.git/
+$ git init /tmp/tmpexczdglq
+Initialized empty Git repository in /tmp/tmpexczdglq/.git/
 hint: Using 'master' as the name for the initial branch. This default branch name
 hint: will change to "main" in Git 3.0. To configure the initial branch name
 hint: to use in all of your new repositories, which will suppress this warning,
@@ -19,22 +19,22 @@ hint: 	git branch -m <name>
 hint:
 hint: Disable this message with "git config set advice.defaultBranchName false"
 exit 0
-$ git -C /tmp/tmp99of9cva config user.name faw
+$ git -C /tmp/tmpexczdglq config user.name faw
 exit 0
-$ git -C /tmp/tmp99of9cva config user.email fawwad30@gmail.com
+$ git -C /tmp/tmpexczdglq config user.email fawwad30@gmail.com
 exit 0
-$ git -C /tmp/tmp99of9cva remote add ping https://github.com/pingdotgg/t3code.git
+$ git -C /tmp/tmpexczdglq remote add ping https://github.com/pingdotgg/t3code.git
 exit 0
-$ git -C /tmp/tmp99of9cva -c protocol.version=2 fetch --depth 1 --filter=blob:none --no-tags ping main
+$ git -C /tmp/tmpexczdglq -c protocol.version=2 fetch --depth 1 --filter=blob:none --no-tags ping main
 From https://github.com/pingdotgg/t3code
  * branch            main       -> FETCH_HEAD
  * [new branch]      main       -> ping/main
 exit 0
-$ git -C /tmp/tmp99of9cva rev-parse FETCH_HEAD
+$ git -C /tmp/tmpexczdglq rev-parse FETCH_HEAD
 6ee03240bccd9287a8c2246e9547697aa5857998
 exit 0
 FETCH_HEAD=6ee03240bccd9287a8c2246e9547697aa5857998
-$ git -C /tmp/tmp99of9cva read-tree FETCH_HEAD
+$ git -C /tmp/tmpexczdglq read-tree FETCH_HEAD
 exit 0
 $ git apply --verbose claude-rollback.patch
 Checking patch apps/server/src/provider/Layers/ClaudeAdapter.test.ts...
@@ -42,28 +42,28 @@ Checking patch apps/server/src/provider/Layers/ClaudeAdapter.ts...
 Applied patch apps/server/src/provider/Layers/ClaudeAdapter.test.ts cleanly.
 Applied patch apps/server/src/provider/Layers/ClaudeAdapter.ts cleanly.
 exit 0
-$ git -C /tmp/tmp99of9cva update-index --add -- apps/server/src/provider/Layers/ClaudeAdapter.ts apps/server/src/provider/Layers/ClaudeAdapter.test.ts
+$ git -C /tmp/tmpexczdglq update-index --add -- apps/server/src/provider/Layers/ClaudeAdapter.ts apps/server/src/provider/Layers/ClaudeAdapter.test.ts
 exit 0
-$ git -C /tmp/tmp99of9cva write-tree
+$ git -C /tmp/tmpexczdglq write-tree
 79d3c3cbc33f0ee15fb417f9a6c8024419d4ce44
 exit 0
 tree=79d3c3cbc33f0ee15fb417f9a6c8024419d4ce44
-commit=2e476ead9541a777d45ed9898419bf9b0adee6af
-$ git -C /tmp/tmp99of9cva log -1 --format=%H%n%P%n%s 2e476ead9541a777d45ed9898419bf9b0adee6af
-2e476ead9541a777d45ed9898419bf9b0adee6af
+commit=f334d4ba6a456b45695215f0dc7baf637a6f2497
+$ git -C /tmp/tmpexczdglq log -1 --format=%H%n%P%n%s f334d4ba6a456b45695215f0dc7baf637a6f2497
+f334d4ba6a456b45695215f0dc7baf637a6f2497
 6ee03240bccd9287a8c2246e9547697aa5857998
 fix(server): Claude rewind no longer orphans its history worker on shutdown
 exit 0
-$ git -C /tmp/tmp99of9cva remote add fork https://x-access-token:***@github.com/faw01/t3code.git
+$ git -C /tmp/tmpexczdglq remote add fork https://x-access-token:***@github.com/faw01/t3code.git
 exit 0
-$ git -C /tmp/tmp99of9cva push --force fork 2e476ead9541a777d45ed9898419bf9b0adee6af:refs/heads/fix/claude-rewind-history-worker
+$ git -C /tmp/tmpexczdglq push --force fork f334d4ba6a456b45695215f0dc7baf637a6f2497:refs/heads/fix/claude-rewind-history-worker
 To https://github.com/faw01/t3code.git
- ! [remote rejected]   2e476ead9541a777d45ed9898419bf9b0adee6af -> fix/claude-rewind-history-worker (refusing to allow a GitHub App to create or update workflow `.github/workflows/mobile-eas-production.yml` without `workflows` permission)
+ ! [remote rejected]   f334d4ba6a456b45695215f0dc7baf637a6f2497 -> fix/claude-rewind-history-worker (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission)
 error: failed to push some refs to 'https://github.com/faw01/t3code.git'
 exit 1
-$ git -C /tmp/tmp99of9cva push --force fork 2e476ead9541a777d45ed9898419bf9b0adee6af:refs/heads/tmp/rebased-11721
+$ git -C /tmp/tmpexczdglq push --force fork f334d4ba6a456b45695215f0dc7baf637a6f2497:refs/heads/tmp/rebased-11721
 To https://github.com/faw01/t3code.git
- ! [remote rejected]   2e476ead9541a777d45ed9898419bf9b0adee6af -> tmp/rebased-11721 (refusing to allow a GitHub App to create or update workflow `.github/workflows/mobile-eas-production.yml` without `workflows` permission)
+ ! [remote rejected]   f334d4ba6a456b45695215f0dc7baf637a6f2497 -> tmp/rebased-11721 (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission)
 error: failed to push some refs to 'https://github.com/faw01/t3code.git'
 exit 1
 tmp push exit 1
