@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - seed/rebase-11721
+    paths:
+      - ".github/workflows/rebase-rewind-branch.yml"
 
 permissions:
   contents: write
@@ -13,27 +15,185 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Replay one-commit fix onto current pingdotgg main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euxo pipefail
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          mkdir -p /tmp/seed
-          for i in 0 1 2 3; do
-            curl -fsSL "https://raw.githubusercontent.com/faw01/t3code/seed/rebase-11721/.github/patches/claude-rollback.b64.$i" -o "/tmp/seed/p$i"
-          done
-          curl -fsSL "https://raw.githubusercontent.com/faw01/t3code/seed/rebase-11721/.github/patches/rewind-commit-message.txt" -o /tmp/seed/msg.txt
-          cat /tmp/seed/p0 /tmp/seed/p1 /tmp/seed/p2 /tmp/seed/p3 | tr -d '\n' | base64 -d > /tmp/claude-rollback.patch
-          test "$(md5sum /tmp/claude-rollback.patch | awk '{print $1}')" = 6cffe5bedad2d97e6f59cffeb70557b1
-          git -c submodule.recurse=false clone --depth 1 --no-recurse-submodules https://github.com/pingdotgg/t3code.git work
-          cd work
-          git config user.name faw
-          git config user.email fawwad30@gmail.com
-          git apply /tmp/claude-rollback.patch
-          git add \
-            apps/server/src/provider/Layers/ClaudeAdapter.ts \
-            apps/server/src/provider/Layers/ClaudeAdapter.test.ts
-          git commit --author="faw <fawwad30@gmail.com>" -F /tmp/seed/msg.txt
-          git rev-parse HEAD
-          git log -1 --format='%H %P %s'
-          git diff --stat HEAD~1
-          git remote add fork "https://x-access-token:${GITHUB_TOKEN}@github.com/faw01/t3code.git"
-          git push --force fork HEAD:refs/heads/fix/claude-rewind-history-worker
+          python3 <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          import traceback
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          TOKEN = os.environ["GITHUB_TOKEN"]
+          API = "https://api.github.com"
+          FORK = "faw01/t3code"
+          UPSTREAM = "pingdotgg/t3code"
+          BRANCH = "fix/claude-rewind-history-worker"
+          SEED = "seed/rebase-11721"
+          PATCH_MD5 = "6cffe5bedad2d97e6f59cffeb70557b1"
+          PATHS = [
+              "apps/server/src/provider/Layers/ClaudeAdapter.ts",
+              "apps/server/src/provider/Layers/ClaudeAdapter.test.ts",
+          ]
+          log_lines: list[str] = []
+
+          def log(msg: str) -> None:
+              print(msg, flush=True)
+              log_lines.append(msg)
+
+          def api(method: str, path: str, data=None, accept: str = "application/vnd.github+json"):
+              body = None if data is None else json.dumps(data).encode()
+              req = urllib.request.Request(
+                  API + path,
+                  data=body,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {TOKEN}",
+                      "Accept": accept,
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "rebase-11721",
+                  },
+              )
+              if body is not None:
+                  req.add_header("Content-Type", "application/json")
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      if accept == "application/vnd.github.raw":
+                          return raw
+                      return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  err = e.read().decode("utf-8", "replace")
+                  log(f"API {method} {path} -> {e.code}: {err}")
+                  raise
+
+          def download(url: str) -> bytes:
+              req = urllib.request.Request(url, headers={"User-Agent": "rebase-11721"})
+              with urllib.request.urlopen(req) as resp:
+                  return resp.read()
+
+          def upload_log() -> None:
+              text = "\n".join(log_lines) + "\n"
+              payload = {
+                  "message": "chore: rebase debug log",
+                  "content": base64.b64encode(text.encode()).decode(),
+                  "branch": SEED,
+              }
+              try:
+                  existing = api("GET", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt?ref={SEED}")
+                  payload["sha"] = existing["sha"]
+              except Exception:
+                  pass
+              api("PUT", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt", payload)
+              log("uploaded last-rebase-log.txt")
+
+          try:
+              try:
+                  synced = api("POST", f"/repos/{FORK}/merge-upstream", {"branch": "main"})
+                  log(f"merge-upstream: {json.dumps(synced)}")
+              except Exception as e:
+                  log(f"merge-upstream skipped: {e}")
+
+              main = api("GET", f"/repos/{UPSTREAM}/commits/main")
+              main_sha = main["sha"]
+              tree_sha = main["commit"]["tree"]["sha"]
+              log(f"pingdotgg main={main_sha} tree={tree_sha}")
+
+              parts = b""
+              for i in range(4):
+                  parts += download(
+                      f"https://raw.githubusercontent.com/{FORK}/{SEED}/.github/patches/claude-rollback.b64.{i}"
+                  )
+              patch = base64.b64decode(parts.replace(b"\n", b""))
+              digest = hashlib.md5(patch).hexdigest()
+              log(f"patch md5={digest} bytes={len(patch)}")
+              if digest != PATCH_MD5:
+                  raise SystemExit(f"patch md5 mismatch: {digest}")
+
+              message = download(
+                  f"https://raw.githubusercontent.com/{FORK}/{SEED}/.github/patches/rewind-commit-message.txt"
+              ).decode()
+              if not message.endswith("\n"):
+                  message += "\n"
+              log(f"message first line={message.splitlines()[0]!r}")
+
+              with tempfile.TemporaryDirectory() as tmp:
+                  root = Path(tmp)
+                  for rel in PATHS:
+                      dest = root / rel
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      dest.write_bytes(
+                          download(f"https://raw.githubusercontent.com/{UPSTREAM}/{main_sha}/{rel}")
+                      )
+                      log(f"downloaded {rel} ({dest.stat().st_size} bytes)")
+                  patch_path = root / "claude-rollback.patch"
+                  patch_path.write_bytes(patch)
+                  applied = subprocess.run(
+                      ["git", "apply", "--verbose", str(patch_path)],
+                      cwd=root,
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+                  log(applied.stdout)
+                  log(applied.stderr)
+                  blobs = []
+                  for rel in PATHS:
+                      content = (root / rel).read_text()
+                      blob = api("POST", f"/repos/{FORK}/git/blobs", {"content": content, "encoding": "utf-8"})
+                      log(f"blob {rel}={blob['sha']}")
+                      blobs.append({"path": rel, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+
+              tree = api("POST", f"/repos/{FORK}/git/trees", {"base_tree": tree_sha, "tree": blobs})
+              log(f"tree={tree['sha']}")
+              commit = api(
+                  "POST",
+                  f"/repos/{FORK}/git/commits",
+                  {
+                      "message": message,
+                      "tree": tree["sha"],
+                      "parents": [main_sha],
+                      "author": {"name": "faw", "email": "fawwad30@gmail.com"},
+                      "committer": {"name": "faw", "email": "fawwad30@gmail.com"},
+                  },
+              )
+              new_sha = commit["sha"]
+              log(f"commit={new_sha} parents={commit.get('parents')}")
+
+              updated = api(
+                  "PATCH",
+                  f"/repos/{FORK}/git/refs/heads/{BRANCH}",
+                  {"sha": new_sha, "force": True},
+              )
+              log(f"updated {BRANCH} -> {updated.get('object', {}).get('sha', new_sha)}")
+
+              compare = api("GET", f"/repos/{FORK}/compare/{main_sha}...{new_sha}")
+              files = [f["filename"] for f in compare.get("files", [])]
+              log(f"ahead={compare.get('ahead_by')} files={files}")
+              if compare.get("ahead_by") != 1 or files != PATHS:
+                  raise SystemExit(f"unexpected compare: ahead={compare.get('ahead_by')} files={files}")
+
+              pr = api("GET", f"/repos/{UPSTREAM}/pulls/11721")
+              log(
+                  f"PR commits={pr.get('commits')} files={pr.get('changed_files')} "
+                  f"head={pr.get('head', {}).get('sha')} base={pr.get('base', {}).get('sha')} "
+                  f"mergeable_state={pr.get('mergeable_state')}"
+              )
+              log("SUCCESS")
+          except BaseException:
+              log(traceback.format_exc())
+              try:
+                  upload_log()
+              except Exception:
+                  log(traceback.format_exc())
+              raise
+          else:
+              upload_log()
+          PY
