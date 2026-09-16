@@ -14,22 +14,33 @@ jobs:
   rebase:
     runs-on: ubuntu-latest
     steps:
-      - name: Force-push rebased commit
+      - name: Replay commit locally and force-push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: c79a7d912d56fb3f0eaf9b93509cb6f40b80fae0
         run: |
           python3 <<'PY'
-          import base64, json, os, subprocess, traceback, urllib.error, urllib.request
+          import base64, hashlib, json, os, subprocess, tempfile, traceback, urllib.error, urllib.request
+          from pathlib import Path
+
           TOKEN = os.environ["GITHUB_TOKEN"]
-          SHA = os.environ["SHA"]
           API = "https://api.github.com"
           FORK = "faw01/t3code"
+          UPSTREAM = "pingdotgg/t3code"
+          BRANCH = "fix/claude-rewind-history-worker"
+          SEED = "seed/rebase-11721"
+          PATCH_MD5 = "6cffe5bedad2d97e6f59cffeb70557b1"
+          PATHS = [
+              "apps/server/src/provider/Layers/ClaudeAdapter.ts",
+              "apps/server/src/provider/Layers/ClaudeAdapter.test.ts",
+          ]
           lines = []
 
           def log(m):
               print(m, flush=True)
               lines.append(m)
+
+          def scrub(s):
+              return s.replace(TOKEN, "***")
 
           def api(method, path, data=None):
               body = None if data is None else json.dumps(data).encode()
@@ -50,65 +61,130 @@ jobs:
                   with urllib.request.urlopen(req) as resp:
                       raw = resp.read()
                       parsed = json.loads(raw) if raw else {}
-                      log(f"{method} {path} -> {resp.status} {json.dumps(parsed)[:500]}")
+                      log(f"API {method} {path} -> {resp.status}")
                       return parsed
               except urllib.error.HTTPError as e:
                   err = e.read().decode("utf-8", "replace")
-                  log(f"{method} {path} -> {e.code} {err}")
-                  return {"_error": e.code, "_body": err}
+                  log(f"API {method} {path} -> {e.code} {err[:300]}")
+                  raise
 
-          def scrub(s):
-              return s.replace(TOKEN, "***")
+          def download(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "rebase-11721"})
+              with urllib.request.urlopen(req) as resp:
+                  return resp.read()
 
-          def run(cmd):
+          def run(cmd, cwd=None, check=True):
               log("$ " + " ".join(scrub(c) for c in cmd))
-              p = subprocess.run(cmd, capture_output=True, text=True)
-              if p.stdout:
-                  log(scrub(p.stdout))
-              if p.stderr:
-                  log(scrub(p.stderr))
+              p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+              if p.stdout.strip():
+                  log(scrub(p.stdout.rstrip()))
+              if p.stderr.strip():
+                  log(scrub(p.stderr.rstrip()))
               log(f"exit {p.returncode}")
-              return p.returncode
+              if check and p.returncode != 0:
+                  raise SystemExit(p.returncode)
+              return p
 
           def upload():
               text = "\n".join(lines) + "\n"
               payload = {
                   "message": "chore: rebase debug log",
                   "content": base64.b64encode(text.encode()).decode(),
-                  "branch": "seed/rebase-11721",
+                  "branch": SEED,
               }
               try:
-                  existing = api("GET", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt?ref=seed/rebase-11721")
-                  if "sha" in existing:
-                      payload["sha"] = existing["sha"]
+                  existing = api("GET", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt?ref={SEED}")
+                  payload["sha"] = existing["sha"]
               except Exception:
                   pass
-              api("PUT", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt", payload)
+              try:
+                  api("PUT", f"/repos/{FORK}/contents/.github/patches/last-rebase-log.txt", payload)
+              except Exception as e:
+                  log(f"upload failed: {e}")
 
-          ok = False
           try:
-              api("GET", f"/repos/{FORK}/commits/{SHA}")
-              created = api("POST", f"/repos/{FORK}/git/refs", {"ref": "refs/heads/tmp/rebased-11721", "sha": SHA})
-              if created.get("_error"):
-                  api("PATCH", "/repos/faw01/t3code/git/refs/heads/tmp/rebased-11721", {"sha": SHA, "force": True})
-              run(["git", "config", "--global", "--unset-all", "http.https://github.com/.extraheader"])
-              run(["git", "init", "--bare", "/tmp/bare.git"])
-              run(["git", "-C", "/tmp/bare.git", "remote", "add", "origin", f"https://x-access-token:{TOKEN}@github.com/faw01/t3code.git"])
-              run(["git", "-C", "/tmp/bare.git", "fetch", "--depth", "1", "origin", "tmp/rebased-11721"])
-              rc = run(["git", "-C", "/tmp/bare.git", "push", "--force", "origin", f"{SHA}:refs/heads/fix/claude-rewind-history-worker"])
-              if rc != 0:
-                  rc = run(["git", "-C", "/tmp/bare.git", "push", "--force", "origin", "refs/remotes/origin/tmp/rebased-11721:refs/heads/fix/claude-rewind-history-worker"])
-              if rc != 0:
-                  rc = run(["git", "-C", "/tmp/bare.git", "push", "--force", "origin", "FETCH_HEAD:refs/heads/fix/claude-rewind-history-worker"])
-              patched = api("PATCH", "/repos/faw01/t3code/git/refs/heads/fix/claude-rewind-history-worker", {"sha": SHA, "force": True})
-              encoded = api("PATCH", "/repos/faw01/t3code/git/refs/heads%2Ffix%2Fclaude-rewind-history-worker", {"sha": SHA, "force": True})
-              put = api("POST", "/repos/faw01/t3code/git/refs", {"ref": "refs/heads/fix/claude-rewind-history-worker", "sha": SHA})
-              ref = api("GET", f"/repos/{FORK}/git/ref/heads/fix/claude-rewind-history-worker")
-              log(f"final ref {ref}")
-              current = (ref.get("object") or {}).get("sha")
-              ok = current == SHA
-              if not ok:
-                  raise SystemExit(f"ref still {current}")
+              main = api("GET", f"/repos/{UPSTREAM}/commits/main")
+              main_sha = main["sha"]
+              log(f"main={main_sha}")
+
+              parts = b"".join(
+                  download(f"https://raw.githubusercontent.com/{FORK}/{SEED}/.github/patches/claude-rollback.b64.{i}")
+                  for i in range(4)
+              )
+              patch = base64.b64decode(parts.replace(b"\n", b""))
+              digest = hashlib.md5(patch).hexdigest()
+              log(f"patch md5={digest}")
+              if digest != PATCH_MD5:
+                  raise SystemExit("patch md5 mismatch")
+              message = download(
+                  f"https://raw.githubusercontent.com/{FORK}/{SEED}/.github/patches/rewind-commit-message.txt"
+              ).decode()
+              if not message.endswith("\n"):
+                  message += "\n"
+
+              work = Path(tempfile.mkdtemp())
+              run(["git", "config", "--global", "--unset-all", "http.https://github.com/.extraheader"], check=False)
+              run(["git", "init", str(work)])
+              run(["git", "-C", str(work), "config", "user.name", "faw"])
+              run(["git", "-C", str(work), "config", "user.email", "fawwad30@gmail.com"])
+              run(["git", "-C", str(work), "remote", "add", "ping", f"https://github.com/{UPSTREAM}.git"])
+              run([
+                  "git", "-C", str(work), "-c", "protocol.version=2",
+                  "fetch", "--depth", "1", "--filter=blob:none", "--no-tags", "ping", "main",
+              ])
+              fetched = run(["git", "-C", str(work), "rev-parse", "FETCH_HEAD"]).stdout.strip()
+              log(f"FETCH_HEAD={fetched}")
+              if fetched != main_sha:
+                  raise SystemExit(f"fetched {fetched} != {main_sha}")
+              run(["git", "-C", str(work), "read-tree", "FETCH_HEAD"])
+
+              for rel in PATHS:
+                  dest = work / rel
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  dest.write_bytes(download(f"https://raw.githubusercontent.com/{UPSTREAM}/{main_sha}/{rel}"))
+              (work / "claude-rollback.patch").write_bytes(patch)
+              run(["git", "apply", "--verbose", "claude-rollback.patch"], cwd=str(work))
+              run(["git", "-C", str(work), "update-index", "--add", "--"] + PATHS)
+              tree = run(["git", "-C", str(work), "write-tree"]).stdout.strip()
+              log(f"tree={tree}")
+              msg_path = work / "msg.txt"
+              msg_path.write_text(message)
+              env = os.environ.copy()
+              env.update({
+                  "GIT_AUTHOR_NAME": "faw",
+                  "GIT_AUTHOR_EMAIL": "fawwad30@gmail.com",
+                  "GIT_COMMITTER_NAME": "faw",
+                  "GIT_COMMITTER_EMAIL": "fawwad30@gmail.com",
+              })
+              commit = subprocess.run(
+                  ["git", "commit-tree", tree, "-p", fetched, "-F", str(msg_path)],
+                  cwd=str(work),
+                  capture_output=True,
+                  text=True,
+                  env=env,
+                  check=True,
+              ).stdout.strip()
+              log(f"commit={commit}")
+              run(["git", "-C", str(work), "log", "-1", "--format=%H%n%P%n%s", commit])
+              run(["git", "-C", str(work), "remote", "add", "fork", f"https://x-access-token:{TOKEN}@github.com/{FORK}.git"])
+              push = run(
+                  ["git", "-C", str(work), "push", "--force", "fork", f"{commit}:refs/heads/{BRANCH}"],
+                  check=False,
+              )
+              if push.returncode != 0:
+                  alt = run(
+                      ["git", "-C", str(work), "push", "--force", "fork", f"{commit}:refs/heads/tmp/rebased-11721"],
+                      check=False,
+                  )
+                  log(f"tmp push exit {alt.returncode}")
+                  raise SystemExit("force-push to PR branch failed")
+              ref = api("GET", f"/repos/{FORK}/git/ref/heads/{BRANCH}")
+              current = ref["object"]["sha"]
+              log(f"ref={current}")
+              if current != commit:
+                  raise SystemExit(f"ref {current} != {commit}")
+              pr = api("GET", f"/repos/{UPSTREAM}/pulls/11721")
+              log(f"PR commits={pr.get('commits')} files={pr.get('changed_files')} head={pr.get('head', {}).get('sha')}")
               log("SUCCESS")
           except BaseException:
               log(traceback.format_exc())
